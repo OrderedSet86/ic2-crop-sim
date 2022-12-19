@@ -1,19 +1,28 @@
 # Re-implemented in Python
+import logging
 import math
 import random
 from dataclasses import dataclass
 
+from termcolor import colored
+
+
 
 class TileEntityCrop:
-    def __init__(self, crop, biome, height, surrounding_blocks):
+    def __init__(self, crop, biome, height=124, surrounding_blocks=0, can_see_sky=True, dirt_under=3, hydrated_farmland=True):
         self.crop = crop
         self.biome = biome
         self.height = height
-        self.surrounding_blocks = surrounding_blocks
+        self.surrounding_blocks = surrounding_blocks # num blocks reducing air quality
+        self.can_see_sky = can_see_sky
+        self.dirt_under = dirt_under # number of dirt under
+        self.hydrated_farmland = hydrated_farmland # true/false - is it on hydrated farmland
 
         self.growthPoints = 0
         self.nutrientStorage = 0
         self.waterStorage = 0
+
+        self.tickCounter = 0
 
 
     def __repr__(self):
@@ -34,6 +43,8 @@ class TileEntityCrop:
         self.nutrientStorage = max(0, self.nutrientStorage - 1)
         self.waterStorage = max(0, self.waterStorage - 1)
 
+        self.tickCounter += 1
+
 
     def calcGrowthRate(self):
         base = 3 + random.randint(0, 6) + self.crop.statGrowth
@@ -48,14 +59,22 @@ class TileEntityCrop:
         )
 
         if have >= need:
-            base *= (100 + (have - need))/100
+            base *= (100 + (have - need)) / 100
+            base = int(base)
         else:
             # Make weed
             neg = (need - have) * 4
+
+            if neg <= 100:
+                logging.debug(colored('Stat too low but cannot grow weed', 'yellow'))
+            else:
+                logging.debug(colored('Stat too low and can grow weed', 'red'))
+
             if (neg > 100 and random.randint(0, 31) > self.crop.statResistance):
                 self.reset() # TODO:
             else:
                 base *= (100 - neg) / 100
+                base = int(base)
                 base = max(0, base)
         
         return base
@@ -64,10 +83,8 @@ class TileEntityCrop:
     def getHumidity(self):
         value = self.getHumidityBiomeBonus()
 
-        # FIXME: Some unknown modification for humidity
-        # if (this.field_145850_b.func_72805_g(this.field_145851_c, this.field_145848_d - 1, this.field_145849_e) >= 7) {
-        #     value += 2;
-        # }
+        if self.hydrated_farmland:
+            value += 2
 
         if self.waterStorage >= 5:
             value += 2
@@ -84,10 +101,10 @@ class TileEntityCrop:
     def getNutrients(self):
         value = self.getNutrientBiomeBonus()
 
-        # FIXME: Some unknown modification for nutrients
-        # for(int i = 2; i < 5 && this.field_145850_b.func_147439_a(this.field_145851_c, this.field_145848_d - i, this.field_145849_e) == Blocks.field_150346_d; ++i) {
-        #     ++value;
-        # }
+        dirt_bonus = self.dirt_under
+        dirt_bonus = min(3, dirt_bonus)
+        dirt_bonus = max(0, dirt_bonus)
+        value += self.dirt_under
 
         value += (self.nutrientStorage + 19) / 20
         return value
@@ -95,7 +112,7 @@ class TileEntityCrop:
     
     def getNutrientBiomeBonus(self):
         return self.biome.nutrient
-    
+
 
     def getAirQuality(self):
         value = 0
@@ -112,11 +129,14 @@ class TileEntityCrop:
 
         value += fresh // 2
 
-        # FIXME: Unknown modification for air quality
-        # if (this.field_145850_b.func_72937_j(this.field_145851_c, this.field_145848_d + 1, this.field_145849_e)) {
-        #     value += 2;
-        # }
+        if self.can_see_sky:
+            value += 2
+
         return value
+    
+    
+    def harvestAutomated(self):
+        pass
         
 
 
@@ -127,6 +147,10 @@ class CropCard:
         self.statResistance = resistance
         self.tier = -1
         self.size = 0
+
+
+    def __repr__(self):
+        return str(vars(self))
 
 
     def weightInfluences(self, humidity, nutrient, air_quality):
@@ -164,13 +188,17 @@ class Biome:
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+
     crop = CropStickreed(23, 31, 0)
     biome = Biome('tropical rainforest', 1, 10)
-    te = TileEntityCrop(crop, biome, 128, 0)
+    te = TileEntityCrop(crop, biome)
 
     te.waterStorage = 200
     te.nutrientStorage = 200
 
     print(te)
-    te.tick()
-    print(te)
+    while crop.canGrow() and te.tickCounter < 100:
+        te.tick()
+        print(te)
+    print(te.tickCounter)
